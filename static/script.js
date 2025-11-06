@@ -130,7 +130,7 @@ function mostrarSesiones(sessions, totalSessions) {
     // Agregar información del total de sesiones
     const totalInfo = document.createElement('div');
     totalInfo.className = 'total-sessions-info';
-    totalInfo.innerHTML = `<h3>📊 Total de Sesiones: ${totalSessions}</h3>`;
+    totalInfo.innerHTML = `<h3>Total de Sesiones: ${totalSessions}</h3>`;
     datosContainer.appendChild(totalInfo);
     
     sessions.forEach((session, index) => {
@@ -155,8 +155,8 @@ function mostrarSesiones(sessions, totalSessions) {
         // Verificar si tiene datos del paciente
         const hasPatientData = session.patient_info;
         const patientStatus = hasPatientData ? 
-            `<span style="color: #48bb78; font-weight: bold;">✅ Con datos del paciente</span>` : 
-            `<span style="color: #e53e3e; font-weight: bold;">❌ Sin datos del paciente</span>`;
+            `<span style="color: #48bb78; font-weight: bold;">Con datos del paciente</span>` : 
+            `<span style="color: #e53e3e; font-weight: bold;">Sin datos del paciente</span>`;
         
         sessionElement.innerHTML = `
             <div class="session-header">
@@ -191,7 +191,7 @@ function mostrarSesiones(sessions, totalSessions) {
                     </div>
                 </div>
                 <div class="response-times">
-                    <h4>⏱️ Tiempos de Respuesta</h4>
+                    <h4>Tiempos de Respuesta</h4>
                     <div class="response-grid">
                         <div class="response-item">
                             <span>Pararse:</span>
@@ -215,6 +215,14 @@ function mostrarSesiones(sessions, totalSessions) {
                         </div>
                     </div>
                 </div>
+                ${hasPatientData ? `
+                <div class="cognitive-status" id="cognitive-status-${session.session_id}">
+                    <h4>Estado Cognitivo</h4>
+                    <div class="cognitive-loading" style="color: #718096; font-style: italic;">
+                        Calculando predicción...
+                    </div>
+                </div>
+                ` : ''}
                 <div class="session-actions">
                     <div class="patient-status">${patientStatus}</div>
                     <button class="btn-primary" onclick="seleccionarSesion('${session.session_id}')" data-session-id="${session.session_id}">
@@ -225,7 +233,158 @@ function mostrarSesiones(sessions, totalSessions) {
         `;
         
         datosContainer.appendChild(sessionElement);
+        
+        // Si tiene datos del paciente, obtener predicción del estado cognitivo
+        if (hasPatientData) {
+            obtenerPrediccionEstadoCognitivo(session);
+        }
     });
+}
+
+// Función para obtener predicción del estado cognitivo
+async function obtenerPrediccionEstadoCognitivo(session) {
+    try {
+        const response = await fetch('/api/predecir-estado-cognitivo', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                session_data: session,
+                patient_info: session.patient_info
+            })
+        });
+        
+        const data = await response.json();
+        
+        const cognitiveStatusElement = document.getElementById(`cognitive-status-${session.session_id}`);
+        if (!cognitiveStatusElement) return;
+        
+        if (data.success && data.prediccion) {
+            const prediccion = data.prediccion;
+            let estadoHTML = '';
+            
+            // Si el modelo devuelve 'resultado' (Alto/Bajo), usar ese formato
+            if (prediccion.resultado !== undefined) {
+                // Modelo binario: 'Alto' o 'Bajo'
+                const resultado = prediccion.resultado;
+                const esAlto = resultado === 'Alto' || prediccion.valor === 1;
+                const color = esAlto ? '#48bb78' : '#e53e3e'; // Verde para 'Alto', Rojo para 'Bajo'
+                
+                estadoHTML = `
+                    <div class="cognitive-result">
+                        <div class="cognitive-class" style="font-size: 1.3em; font-weight: bold; color: ${color};">
+                            ${resultado}
+                        </div>
+                        ${prediccion.probabilidades ? `
+                        <div class="cognitive-confidence" style="font-size: 0.9em; color: #718096; margin-top: 5px;">
+                            Probabilidad: ${(prediccion.probabilidades[prediccion.valor] * 100).toFixed(1)}%
+                        </div>
+                        ` : ''}
+                    </div>
+                `;
+            } else if (prediccion.clase !== undefined) {
+                // Modelo con clases (clasificación)
+                const clases = ['Normal', 'Leve', 'Moderado', 'Severo'];
+                const claseTexto = clases[prediccion.clase] || `Clase ${prediccion.clase}`;
+                const confianza = prediccion.probabilidades ? 
+                    (Math.max(...prediccion.probabilidades) * 100).toFixed(1) : 'N/A';
+                
+                estadoHTML = `
+                    <div class="cognitive-result">
+                        <div class="cognitive-class" style="font-size: 1.2em; font-weight: bold; color: #3182ce;">
+                            ${claseTexto}
+                        </div>
+                        ${prediccion.probabilidades ? `
+                        <div class="cognitive-confidence" style="font-size: 0.9em; color: #718096; margin-top: 5px;">
+                            Confianza: ${confianza}%
+                        </div>
+                        ` : ''}
+                    </div>
+                `;
+            } else if (prediccion.valor !== undefined && prediccion.valor !== null) {
+                // Modelo con valor numérico (0 o 1 para binario)
+                const valor = parseInt(prediccion.valor);
+                
+                // Si es 0 o 1, tratar como binario
+                if (valor === 0 || valor === 1) {
+                    const resultado = valor === 1 ? 'Alto' : 'Bajo';
+                    const color = valor === 1 ? '#48bb78' : '#e53e3e'; // Verde para 'Alto', Rojo para 'Bajo'
+                    
+                    estadoHTML = `
+                        <div class="cognitive-result">
+                            <div class="cognitive-class" style="font-size: 1.3em; font-weight: bold; color: ${color};">
+                                ${resultado}
+                            </div>
+                            ${prediccion.probabilidades ? `
+                            <div class="cognitive-confidence" style="font-size: 0.9em; color: #718096; margin-top: 5px;">
+                                Probabilidad: ${(prediccion.probabilidades[valor] * 100).toFixed(1)}%
+                            </div>
+                            ` : ''}
+                        </div>
+                    `;
+                } else {
+                    // Valor numérico continuo (regresión o score)
+                    let color = '#48bb78';
+                    let estado = 'Normal';
+                    
+                    if (valor < 0.3) {
+                        color = '#48bb78';
+                        estado = 'Normal';
+                    } else if (valor < 0.6) {
+                        color = '#ed8936';
+                        estado = 'Leve';
+                    } else if (valor < 0.8) {
+                        color = '#e53e3e';
+                        estado = 'Moderado';
+                    } else {
+                        color = '#c53030';
+                        estado = 'Severo';
+                    }
+                    
+                    estadoHTML = `
+                        <div class="cognitive-result">
+                            <div class="cognitive-class" style="font-size: 1.2em; font-weight: bold; color: ${color};">
+                                ${estado}
+                            </div>
+                            <div class="cognitive-value" style="font-size: 0.9em; color: #718096; margin-top: 5px;">
+                                Score: ${valor.toFixed(3)}
+                            </div>
+                        </div>
+                    `;
+                }
+            } else {
+                estadoHTML = `
+                    <div class="cognitive-result" style="color: #e53e3e;">
+                        Error: Formato de predicción no reconocido
+                    </div>
+                `;
+            }
+            
+            cognitiveStatusElement.innerHTML = `
+                <h4>Estado Cognitivo</h4>
+                ${estadoHTML}
+            `;
+        } else {
+            cognitiveStatusElement.innerHTML = `
+                <h4>Estado Cognitivo</h4>
+                <div class="cognitive-error" style="color: #e53e3e; font-style: italic;">
+                    ${data.error || 'Error al obtener predicción'}
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Error al obtener predicción del estado cognitivo:', error);
+        const cognitiveStatusElement = document.getElementById(`cognitive-status-${session.session_id}`);
+        if (cognitiveStatusElement) {
+            cognitiveStatusElement.innerHTML = `
+                <h4>Estado Cognitivo</h4>
+                <div class="cognitive-error" style="color: #e53e3e; font-style: italic;">
+                    Error al calcular predicción
+                </div>
+            `;
+        }
+    }
 }
 
 // Función para formatear fechas de manera más legible
@@ -308,7 +467,7 @@ function seleccionarSesion(sessionId) {
             
             // Verificar si ya tiene datos del paciente
             const patientStatus = sessionContainer.querySelector('.patient-status');
-            hasPatientData = patientStatus && patientStatus.textContent.includes('✅');
+            hasPatientData = patientStatus && patientStatus.textContent.includes('Con datos del paciente');
             
             // Reconstruir los datos básicos de la sesión
             sessionData = {
@@ -411,7 +570,7 @@ function mostrarDatosPaciente(patientInfo) {
     if (patientInfo) {
         // Mostrar datos existentes
         pacienteInfo.innerHTML = `
-            <h3>👤 Información del Paciente</h3>
+            <h3>Información del Paciente</h3>
             <div class="paciente-details">
                 <div class="paciente-detail">
                     <div class="paciente-detail-label">Nombre:</div>
@@ -524,8 +683,8 @@ async function guardarDatosPaciente(patientData) {
             // Mostrar mensaje de éxito
             mostrarMensaje('Datos del paciente guardados exitosamente', 'success');
             
-            // Actualizar solo la sesión específica en la interfaz sin recargar todo
-            actualizarSesionEnInterfaz(sesionSeleccionada);
+            // Recargar datos de la fecha para obtener la sesión actualizada
+            await cargarDatosFecha(fechaSeleccionada);
             
         } else {
             throw new Error(result.error || 'Error al guardar los datos');
@@ -552,7 +711,7 @@ function actualizarSesionEnInterfaz(sessionData) {
             // Actualizar el estado del paciente en la interfaz
             const patientStatus = sessionContainer.querySelector('.patient-status');
             if (patientStatus) {
-                patientStatus.innerHTML = '<span style="color: #48bb78; font-weight: bold;">✅ Con datos del paciente</span>';
+                patientStatus.innerHTML = '<span style="color: #48bb78; font-weight: bold;">Con datos del paciente</span>';
             }
             
             // Actualizar el texto del botón
